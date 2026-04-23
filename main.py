@@ -18,7 +18,8 @@ from typing import Optional
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from physics import analyze_condensation, c_to_f
 
@@ -243,12 +244,9 @@ async def calculate(
 
 @app.get("/")
 def root():
-    """Frontend served in Chunk 3. For now, a friendly pointer."""
-    return JSONResponse(
-        {
-            "app": "INOVUES Cavity-Side Condensation Calculator",
-            "version": "0.1.0",
-            "docs": "/docs",
-            "endpoints": ["/health", "/geocode", "/weather", "/calculate"],
-        }
-    )
+    """Serve the frontend HTML."""
+    return FileResponse("static/index.html")
+
+
+# Static file serving (for future CSS/JS/images if we split them out)
+app.mount("/static", StaticFiles(directory="static"), name="static")

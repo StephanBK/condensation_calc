@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>INOVUES · Cavity-Side Condensation Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #FAFAF7;
+      font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+      min-height: 100vh;
+    }
+    * { box-sizing: border-box; }
+    input[type="range"] { width: 100%; }
+    button { font-family: inherit; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React 18 UMD from unpkg CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <script>
+  'use strict';
+  const { useState, useMemo, useEffect, useRef } = React;
+  const h = React.createElement;
+
+  // ============================================================
+  // Brand tokens — match the original calculator exactly
+  // ============================================================
+  const C = {
+    navy: "#0B2A4A", navyDeep: "#061A2F",
+    teal: "#00A3B4", tealSoft: "#C7ECEF",
+    amber: "#D97706", red: "#B91C1C", redSoft: "#FEE2E2",
+    green: "#15803D",
+    surface: "#FAFAF7", card: "#FFFFFF",
+    line: "#E7E5E0", lineStrong: "#CFCCC5",
+    ink: "#0F172A", muted: "#64748B", faint: "#94A3B8",
+  };
+
+  const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+  const MONTH_START = [0,31,59,90,120,151,181,212,243,273,304,334];
+
+  // ============================================================
+  // Helper: risk categorization (same thresholds as original)
+  // ============================================================
+  function categorizeRisk(totalCond, pctPool) {
+    if (totalCond === 0)  return { level: "None",     color: C.green, note: "No condensation risk under current conditions." };
+    if (pctPool < 2)      return { level: "Low",      color: C.green, note: "Infrequent, short-duration events." };
+    if (pctPool < 8)      return { level: "Moderate", color: C.amber, note: "Periodic condensation — monitor during cold spells." };
+    if (pctPool < 20)     return { level: "Elevated", color: C.amber, note: "Frequent condensation — assembly review recommended." };
+    return                       { level: "Severe",   color: C.red,   note: "Sustained condensation — design intervention required." };
+  }
+
+  // ============================================================
+  // UI primitives
+  // ============================================================
+  function Slider({ label, unit, value, min, max, step, onChange, display, hint }) {
+    return h("div", {
+      style: { background: C.card, padding: "14px 16px" }
+    },
+      h("div", { style: { display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:"8px" } },
+        h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", letterSpacing:"0.12em", color:C.muted, fontWeight:600, textTransform:"uppercase" } }, label),
+        h("div", { style: { fontSize:"20px", fontWeight:600, color:C.navy, fontVariantNumeric:"tabular-nums" } },
+          display, h("span", { style: { fontSize:"12px", color:C.muted, marginLeft:"4px" } }, unit)
+        )
+      ),
+      h("input", {
+        type: "range", min, max, step, value,
+        onChange: (e) => onChange(parseFloat(e.target.value)),
+        style: { accentColor: C.teal }
+      }),
+      hint && h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", color:C.faint, marginTop:"4px", fontStyle:"italic" } }, hint)
+    );
+  }
+
+  function NumberInput({ label, unit, value, onChange, hint, step = 0.001, min = 0, max = 1 }) {
+    return h("div", {
+      style: { background: C.card, padding: "14px 16px" }
+    },
+      h("div", { style: { display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:"8px" } },
+        h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", letterSpacing:"0.12em", color:C.muted, fontWeight:600, textTransform:"uppercase" } }, label),
+        h("div", { style: { fontSize:"20px", fontWeight:600, color:C.navy, fontVariantNumeric:"tabular-nums" } },
+          value.toFixed(3), h("span", { style: { fontSize:"12px", color:C.muted, marginLeft:"4px" } }, unit)
+        )
+      ),
+      h("input", {
+        type: "number",
+        min, max, step,
+        value,
+        onChange: (e) => {
+          const v = parseFloat(e.target.value);
+          if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v)));
+        },
+        style: {
+          width: "100%", padding: "6px 8px", fontSize: "14px",
+          border: `1px solid ${C.line}`, borderRadius: "2px",
+          fontFamily: "'IBM Plex Mono', monospace",
+          fontVariantNumeric: "tabular-nums",
+        }
+      }),
+      hint && h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", color:C.faint, marginTop:"4px", fontStyle:"italic" } }, hint)
+    );
+  }
+
+  function ToggleButton({ active, onClick, label, sub }) {
+    return h("button", {
+      onClick,
+      style: {
+        background: active ? C.navy : C.card,
+        color: active ? C.card : C.ink,
+        border: "none", padding: "14px 16px", cursor: "pointer",
+        textAlign: "left", transition: "background 0.15s ease"
+      }
+    },
+      h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"11px", letterSpacing:"0.08em", fontWeight:600, marginBottom:"4px", textTransform:"uppercase", opacity: active ? 1 : 0.85 } }, label),
+      h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", opacity: active ? 0.75 : 0.55 } }, sub)
+    );
+  }
+
+  function Stat({ label, value, unit, sub, hero, color }) {
+    return h("div", {
+      style: { background: C.card, padding: hero ? "18px 20px" : "16px 18px" }
+    },
+      h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", letterSpacing:"0.12em", color:C.muted, fontWeight:600, textTransform:"uppercase", marginBottom:"8px" } }, label),
+      h("div", { style: { fontSize: hero ? "36px" : "26px", fontWeight:600, color: color || C.navy, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em" } },
+        value, unit && h("span", { style: { fontSize:"14px", color:C.muted, marginLeft:"4px", fontWeight:500 } }, unit)
+      ),
+      sub && h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"11px", color:C.muted, marginTop:"6px" } }, sub)
+    );
+  }
+
+  function RiskBadge({ risk }) {
+    return h("div", {
+      style: {
+        background: risk.color === C.green ? "#DCFCE7" : risk.color === C.amber ? "#FEF3C7" : risk.color === C.red ? C.redSoft : "#F1F5F9",
+        color: risk.color, padding: "8px 14px", borderRadius: "2px",
+        fontFamily: "'IBM Plex Mono', monospace", fontSize: "12px",
+        fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase",
+        display: "inline-flex", alignItems: "center", gap: "8px",
+      }
+    },
+      h("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: risk.color } }),
+      `Risk: ${risk.level}`
+    );
+  }
+
+  // ============================================================
+  // Heatmap: 365 days × 24 hours grid
+  // ============================================================
+  function Heatmap({ condensation, working, filter, filterLabel }) {
+    const cellSize = 2;
+    const width = 365 * cellSize;
+    const height = 24 * cellSize;
+
+    const cells = [];
+    for (let h = 0; h < 8760; h++) {
+      const day = Math.floor(h / 24);
+      const hr = h % 24;
+      const isWork = working[h] === 1;
+      const included = filter === "all" || (filter === "working" && isWork) || (filter === "off" && !isWork);
+      const cond = condensation[h] === 1;
+      let fill;
+      if (!included) fill = "#F1F1EC";
+      else if (cond) fill = C.red;
+      else fill = "#E7E5E0";
+      cells.push({ x: day * cellSize, y: hr * cellSize, fill });
+    }
+
+    return h("div", { style: { background: C.card, padding: "18px 20px", marginBottom: "20px" } },
+      h("div", { style: { marginBottom: "12px" } },
+        h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", letterSpacing:"0.12em", color:C.muted, fontWeight:600, textTransform:"uppercase" } }, "Hourly condensation map"),
+        h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", color:C.faint, marginTop:"4px", fontStyle:"italic" } },
+          `Each cell = 1 hour. Red = cavity-side surface below indoor dew point. Gray = excluded from ${filterLabel.toLowerCase()} filter.`
+        )
+      ),
+      h("svg", { width: "100%", viewBox: `0 0 ${width} ${height}`, style: { display: "block" } },
+        cells.map((c, i) => h("rect", { key: i, x: c.x, y: c.y, width: cellSize, height: cellSize, fill: c.fill }))
+      ),
+      h("div", { style: { display: "flex", justifyContent: "space-between", marginTop: "6px", fontFamily:"'IBM Plex Mono', monospace", fontSize:"9px", color:C.faint } },
+        MONTHS.map((m, i) => h("span", { key: m }, m))
+      )
+    );
+  }
+
+  // ============================================================
+  // Daily line chart: outdoor + surface temp vs. dew point
+  // ============================================================
+  function DailyChart({ tOutHourly, tSurfHourly, tDewF }) {
+    // Aggregate to daily means
+    const daily = [];
+    for (let d = 0; d < 365; d++) {
+      let oSum = 0, sSum = 0;
+      for (let hr = 0; hr < 24; hr++) {
+        const idx = d * 24 + hr;
+        oSum += tOutHourly[idx];
+        sSum += tSurfHourly[idx];
+      }
+      daily.push({ day: d, tOut: oSum / 24, tSurf: sSum / 24 });
+    }
+
+    const w = 900, ht = 220;
+    const pad = { top: 18, right: 16, bottom: 28, left: 44 };
+    const pw = w - pad.left - pad.right, phh = ht - pad.top - pad.bottom;
+
+    const allY = daily.flatMap(d => [d.tOut, d.tSurf]).concat([tDewF]);
+    const yMin = Math.floor(Math.min(...allY) - 5);
+    const yMax = Math.ceil(Math.max(...allY) + 5);
+
+    const x = (d) => pad.left + (d / 364) * pw;
+    const y = (v) => pad.top + phh - ((v - yMin) / (yMax - yMin)) * phh;
+
+    const path = (accessor) => daily.map((p, i) =>
+      (i === 0 ? "M" : "L") + x(p.day).toFixed(1) + "," + y(accessor(p)).toFixed(1)
+    ).join(" ");
+
+    const yTicks = [yMin, Math.round((yMin+yMax)/4 + yMin/2), Math.round((yMin+yMax)/2), Math.round((yMax+yMin)/4*3), yMax]
+      .filter((v,i,a) => a.indexOf(v) === i);
+
+    return h("div", { style: { background: C.card, padding: "18px 20px", marginBottom: "20px" } },
+      h("div", { style: { marginBottom: "12px" } },
+        h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", letterSpacing:"0.12em", color:C.muted, fontWeight:600, textTransform:"uppercase" } }, "Surface temperature vs. dew point threshold"),
+        h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", color:C.faint, marginTop:"4px", fontStyle:"italic" } },
+          "Daily mean outdoor and cavity-side surface temperature. Condensation occurs when the surface line (teal) dips below the dew point threshold (red). Always annual — shows the driving physics, not the occupancy filter."
+        )
+      ),
+      h("svg", { viewBox: `0 0 ${w} ${ht}`, width: "100%", style: { display: "block" } },
+        // y gridlines + labels
+        yTicks.map((t, i) => h("g", { key: "y"+i },
+          h("line", { x1: pad.left, y1: y(t), x2: w - pad.right, y2: y(t), stroke: C.line, strokeWidth: 0.5, strokeDasharray: "2,3" }),
+          h("text", { x: pad.left - 6, y: y(t) + 3, fontSize: 10, fill: C.muted, textAnchor: "end", fontFamily: "'IBM Plex Mono', monospace" }, t + "°F")
+        )),
+        // x month labels
+        MONTHS.map((m, i) => h("text", {
+          key: m,
+          x: x(MONTH_START[i] + 15),
+          y: ht - pad.bottom + 16,
+          fontSize: 9,
+          fill: C.muted,
+          textAnchor: "middle",
+          fontFamily: "'IBM Plex Mono', monospace"
+        }, m)),
+        // Dew point line
+        h("line", { x1: pad.left, y1: y(tDewF), x2: w - pad.right, y2: y(tDewF), stroke: C.red, strokeWidth: 1.5, strokeDasharray: "4,4" }),
+        h("text", { x: w - pad.right - 4, y: y(tDewF) - 4, fontSize: 10, fill: C.red, textAnchor: "end", fontFamily: "'IBM Plex Mono', monospace" },
+          `Dew point ${tDewF.toFixed(1)}°F`
+        ),
+        // Outdoor line
+        h("path", { d: path(p => p.tOut), fill: "none", stroke: C.navy, strokeWidth: 1.2, opacity: 0.7 }),
+        // Surface line
+        h("path", { d: path(p => p.tSurf), fill: "none", stroke: C.teal, strokeWidth: 1.6 }),
+      ),
+      h("div", { style: { display: "flex", gap: "18px", marginTop: "6px", fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", color:C.muted } },
+        h("span", null, h("span", { style: { color: C.navy, marginRight: 4 } }, "▬"), " Outdoor"),
+        h("span", null, h("span", { style: { color: C.teal, marginRight: 4 } }, "▬"), " Cavity surface"),
+        h("span", null, h("span", { style: { color: C.red, marginRight: 4 } }, "▬ ▬"), " Indoor dew point"),
+      )
+    );
+  }
+
+  // ============================================================
+  // Event analysis (runs of consecutive condensation hours)
+  // ============================================================
+  function analyzeEvents(condensation, working, filter) {
+    const inFilter = (h) => filter === "all" || (filter === "working" && working[h] === 1) || (filter === "off" && working[h] === 0);
+    let events = [], run = 0;
+    for (let h = 0; h < 8760; h++) {
+      if (condensation[h] === 1 && inFilter(h)) {
+        run++;
+      } else if (run > 0) {
+        events.push(run);
+        run = 0;
+      }
+    }
+    if (run > 0) events.push(run);
+    const total = events.length;
+    const avg = total ? events.reduce((a,b)=>a+b,0) / total : 0;
+    const longest = total ? Math.max(...events) : 0;
+    return { count: total, avg, longest };
+  }
+
+  // ============================================================
+  // MAIN APP
+  // ============================================================
+  function App() {
+    const [address, setAddress] = useState("350 5th Ave, New York, NY");
+    const [indoorF, setIndoorF] = useState(70);
+    const [indoorRH, setIndoorRH] = useState(35);
+    const [fFactor, setFFactor] = useState(0.30);
+    const [filter, setFilter] = useState("all");
+
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [result, setResult] = useState(null);  // full API response
+
+    async function runAnalysis() {
+      setLoading(true);
+      setError(null);
+      try {
+        const url = `/calculate?address=${encodeURIComponent(address)}&f=${fFactor}&t_in=${indoorF}&rh_in=${indoorRH}&include_hourly=true`;
+        const r = await fetch(url);
+        if (!r.ok) {
+          const text = await r.text();
+          throw new Error(`HTTP ${r.status}: ${text}`);
+        }
+        const data = await r.json();
+        setResult(data);
+      } catch (e) {
+        setError(e.message || String(e));
+        setResult(null);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // Derived metrics from result + current filter
+    const derived = useMemo(() => {
+      if (!result) return null;
+      const { summary, hourly } = result;
+      const tDewF = summary.t_dew_f;
+
+      let totalCond, totalPool, pctPool;
+      if (filter === "all")          { totalCond = summary.hours_all;     totalPool = summary.hours_total;         pctPool = summary.pct_all; }
+      else if (filter === "working") { totalCond = summary.hours_working; totalPool = summary.total_working_hours; pctPool = summary.pct_working; }
+      else                           { totalCond = summary.hours_off;     totalPool = summary.total_off_hours;     pctPool = summary.pct_off; }
+
+      const risk = categorizeRisk(totalCond, pctPool);
+      const events = analyzeEvents(hourly.condensation, hourly.working, filter);
+
+      return { tDewF, totalCond, totalPool, pctPool, risk, events, hourly };
+    }, [result, filter]);
+
+    const filterLabel = filter === "all" ? "All hours" : filter === "working" ? "Working hours" : "Off hours";
+
+    return h("div", {
+      style: { maxWidth: "1100px", margin: "0 auto", padding: "28px 32px", color: C.ink, minHeight: "100vh" }
+    },
+      // HEADER
+      h("header", {
+        style: {
+          display: "flex", alignItems: "flex-end", justifyContent: "space-between",
+          borderBottom: `1px solid ${C.lineStrong}`, paddingBottom: "16px", marginBottom: "20px", flexWrap: "wrap", gap: "12px"
+        }
+      },
+        h("div", null,
+          h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"11px", letterSpacing:"0.15em", color:C.teal, fontWeight:600, marginBottom:"6px" } }, "INOVUES · ENGINEERING TOOL"),
+          h("h1", { style: { fontSize:"28px", fontWeight:600, color:C.navy, margin:0, letterSpacing:"-0.02em" } }, "Cavity-Side Condensation Analysis"),
+          h("p", { style: { fontSize:"13px", color:C.muted, margin:"4px 0 0", fontFamily:"'IBM Plex Mono', monospace" } },
+            result ? `${result.location.matched_address} · NSRDB TMY · 8,760 hr` : "Enter an address to fetch local weather"
+          )
+        ),
+        derived && h(RiskBadge, { risk: derived.risk })
+      ),
+
+      // ADDRESS BAR
+      h("section", { style: { marginBottom: "20px" } },
+        h("div", {
+          style: { display: "flex", gap: "8px", alignItems: "stretch" }
+        },
+          h("input", {
+            type: "text",
+            value: address,
+            onChange: (e) => setAddress(e.target.value),
+            onKeyDown: (e) => { if (e.key === "Enter") runAnalysis(); },
+            placeholder: "Enter full address (e.g., 350 5th Ave, New York, NY)",
+            style: {
+              flex: 1, padding: "12px 16px", fontSize: "14px",
+              border: `1px solid ${C.lineStrong}`, borderRadius: "2px",
+              fontFamily: "'IBM Plex Sans', sans-serif",
+              background: C.card, color: C.ink,
+            }
+          }),
+          h("button", {
+            onClick: runAnalysis,
+            disabled: loading || !address.trim(),
+            style: {
+              padding: "0 22px", fontSize: "13px", fontWeight: 600,
+              letterSpacing: "0.08em", textTransform: "uppercase",
+              background: loading ? C.muted : C.navy,
+              color: C.card, border: "none", borderRadius: "2px",
+              cursor: loading ? "wait" : "pointer",
+              fontFamily: "'IBM Plex Mono', monospace",
+              whiteSpace: "nowrap",
+            }
+          }, loading ? "Fetching..." : "Run Analysis")
+        ),
+        error && h("div", {
+          style: {
+            marginTop: "8px", padding: "10px 14px", background: C.redSoft, color: C.red,
+            fontSize: "13px", fontFamily: "'IBM Plex Mono', monospace", borderRadius: "2px"
+          }
+        }, "Error: ", error)
+      ),
+
+      // INPUT SLIDERS (3-col)
+      h("section", {
+        style: {
+          display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1px",
+          background: C.lineStrong, border: `1px solid ${C.lineStrong}`, marginBottom: "20px"
+        }
+      },
+        h(Slider, { label: "Indoor temperature", unit: "°F", value: indoorF, min: 60, max: 80, step: 1, onChange: setIndoorF, display: `${indoorF}` }),
+        h(Slider, { label: "Indoor relative humidity", unit: "%", value: indoorRH, min: 20, max: 70, step: 1, onChange: setIndoorRH, display: `${indoorRH}` }),
+        h(NumberInput, { label: "Cavity-side f-factor", unit: "", value: fFactor, onChange: setFFactor, hint: "f = (T_cavity_surface − T_out) / (T_in − T_out), from WINDOW" }),
+      ),
+
+      // Re-run hint when sliders change after result loaded
+      result && !loading && h("div", {
+        style: {
+          padding: "10px 14px", background: C.tealSoft, color: C.navy,
+          fontSize: "12px", fontFamily: "'IBM Plex Mono', monospace",
+          marginBottom: "20px", borderRadius: "2px"
+        }
+      }, "Tip: adjusting f-factor, indoor temp, or RH refreshes results instantly (uses cached weather). Changing the address re-fetches."),
+
+      // Everything below only shows after first analysis
+      derived && [
+        // OCCUPANCY FILTER
+        h("section", { key: "filter", style: { marginBottom: "20px" } },
+          h("div", {
+            style: {
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              marginBottom: "8px", gap: "12px", flexWrap: "wrap"
+            }
+          },
+            h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", letterSpacing:"0.15em", color:C.muted, fontWeight:600, textTransform:"uppercase" } }, "Occupancy filter"),
+            h("div", { style: { fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", color:C.faint, fontStyle:"italic" } }, "Working hours = Mon–Fri · 08:00–18:00 (2,610 hr/yr · 30% of year)")
+          ),
+          h("div", {
+            style: {
+              display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1px",
+              background: C.lineStrong, border: `1px solid ${C.lineStrong}`
+            }
+          },
+            h(ToggleButton, { active: filter === "all",     onClick: () => setFilter("all"),     label: "All hours",     sub: "8,760 hr/yr" }),
+            h(ToggleButton, { active: filter === "working", onClick: () => setFilter("working"), label: "Working hours", sub: "Mon–Fri 8–18 · 2,610 hr" }),
+            h(ToggleButton, { active: filter === "off",     onClick: () => setFilter("off"),     label: "Off hours",     sub: "nights + weekends · 6,150 hr" }),
+          )
+        ),
+
+        // STATS (4-col)
+        h("section", {
+          key: "stats",
+          style: {
+            display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr 1fr", gap: "1px",
+            background: C.lineStrong, border: `1px solid ${C.lineStrong}`, marginBottom: "28px"
+          }
+        },
+          h(Stat, {
+            label: `Condensation hours · ${filterLabel.toLowerCase()}`,
+            value: derived.totalCond.toLocaleString(),
+            sub: `${derived.pctPool.toFixed(1)}% of ${derived.totalPool.toLocaleString()} ${filter === "all" ? "hours" : "filtered hours"}`,
+            hero: true, color: derived.risk.color
+          }),
+          h(Stat, { label: "Indoor dew point", value: derived.tDewF.toFixed(1), unit: "°F", sub: `at ${indoorF}°F / ${indoorRH}% RH` }),
+          h(Stat, { label: "Events", value: derived.events.count.toString(), sub: derived.events.count > 0 ? `avg ${derived.events.avg.toFixed(1)} hr` : "—" }),
+          h(Stat, { label: "Longest event", value: derived.events.longest > 0 ? derived.events.longest.toString() : "—", unit: derived.events.longest > 0 ? "hr" : "", sub: derived.events.longest > 0 ? "consecutive hours" : "—" }),
+        ),
+
+        // HEATMAP
+        h(Heatmap, {
+          key: "heat",
+          condensation: derived.hourly.condensation,
+          working: derived.hourly.working,
+          filter, filterLabel
+        }),
+
+        // DAILY LINE CHART
+        h(DailyChart, {
+          key: "chart",
+          tOutHourly: derived.hourly.t_out_f,
+          tSurfHourly: derived.hourly.t_surf_f,
+          tDewF: derived.tDewF
+        }),
+
+        // Risk interpretation
+        h("div", {
+          key: "risknote",
+          style: {
+            padding: "12px 16px", background: C.card, border: `1px solid ${C.line}`,
+            borderLeft: `3px solid ${derived.risk.color}`, marginBottom: "20px",
+            fontSize: "13px", color: C.ink, lineHeight: 1.5
+          }
+        },
+          h("strong", { style: { color: derived.risk.color } }, `${derived.risk.level} risk: `),
+          derived.risk.note
+        ),
+      ],
+
+      // FOOTER
+      h("footer", {
+        style: {
+          marginTop: "40px", paddingTop: "16px", borderTop: `1px solid ${C.line}`,
+          fontFamily:"'IBM Plex Mono', monospace", fontSize:"10px", color:C.faint,
+          display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px"
+        }
+      },
+        h("span", null, "T_surf = f · (T_in − T_out) + T_out  ·  Magnus-Tetens dew point"),
+        h("span", null, "INOVUES · v0.4 · NSRDB TMY"),
+      )
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+  </script>
+</body>
+</html>
