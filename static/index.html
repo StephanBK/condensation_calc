@@ -60,6 +60,138 @@
   }
 
   // ============================================================
+  // Address autocomplete (Mapbox geocoding v6 forward)
+  // ============================================================
+  function useMapboxToken() {
+    const [token, setToken] = useState(null);
+    useEffect(() => {
+      fetch("/config").then(r => r.json()).then(c => setToken(c.mapbox_token || ""));
+    }, []);
+    return token;
+  }
+
+  function AddressAutocomplete({ value, onChange, onSelect, onEnter, mapboxToken }) {
+    const [suggestions, setSuggestions] = useState([]);
+    const [open, setOpen] = useState(false);
+    const [highlighted, setHighlighted] = useState(0);
+    const debounceRef = useRef(null);
+    const containerRef = useRef(null);
+    const suppressNextFetch = useRef(false);
+
+    // Debounced fetch when value changes
+    useEffect(() => {
+      if (suppressNextFetch.current) {
+        suppressNextFetch.current = false;
+        return;
+      }
+      if (!mapboxToken) return;
+      if (!value || value.trim().length < 3) {
+        setSuggestions([]);
+        setOpen(false);
+        return;
+      }
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(async () => {
+        try {
+          const url = `https://api.mapbox.com/search/geocode/v6/forward?q=${encodeURIComponent(value)}&country=us&types=address&limit=5&access_token=${mapboxToken}`;
+          const r = await fetch(url);
+          if (!r.ok) return;
+          const data = await r.json();
+          const feats = (data.features || []).map(f => ({
+            id: f.id || f.properties?.mapbox_id || Math.random().toString(36),
+            label: f.properties?.full_address || f.properties?.name || "",
+            coords: f.geometry?.coordinates || null, // [lon, lat]
+          })).filter(s => s.label);
+          setSuggestions(feats);
+          setOpen(feats.length > 0);
+          setHighlighted(0);
+        } catch (e) {
+          // silent — autocomplete failure shouldn't break the app
+          console.warn("Mapbox geocode failed:", e);
+        }
+      }, 250);
+      return () => clearTimeout(debounceRef.current);
+    }, [value, mapboxToken]);
+
+    // Close on outside click
+    useEffect(() => {
+      function handler(e) {
+        if (containerRef.current && !containerRef.current.contains(e.target)) {
+          setOpen(false);
+        }
+      }
+      document.addEventListener("mousedown", handler);
+      return () => document.removeEventListener("mousedown", handler);
+    }, []);
+
+    function pick(s) {
+      suppressNextFetch.current = true;  // don't re-fetch when we programmatically set value
+      onSelect(s);
+      setOpen(false);
+      setSuggestions([]);
+    }
+
+    function onKeyDown(e) {
+      if (open && suggestions.length > 0) {
+        if (e.key === "ArrowDown") { e.preventDefault(); setHighlighted(i => (i + 1) % suggestions.length); return; }
+        if (e.key === "ArrowUp")   { e.preventDefault(); setHighlighted(i => (i - 1 + suggestions.length) % suggestions.length); return; }
+        if (e.key === "Enter")     { e.preventDefault(); pick(suggestions[highlighted]); return; }
+        if (e.key === "Escape")    { setOpen(false); return; }
+      } else if (e.key === "Enter") {
+        onEnter && onEnter();
+      }
+    }
+
+    return h("div", {
+      ref: containerRef,
+      style: { position: "relative", flex: 1 }
+    },
+      h("input", {
+        type: "text",
+        value: value,
+        onChange: (e) => onChange(e.target.value),
+        onKeyDown: onKeyDown,
+        onFocus: () => suggestions.length > 0 && setOpen(true),
+        placeholder: mapboxToken
+          ? "Start typing a US address…"
+          : "Enter full US address (autocomplete disabled — no Mapbox token)",
+        autoComplete: "off",
+        spellCheck: false,
+        style: {
+          width: "100%", padding: "12px 16px", fontSize: "14px",
+          border: `1px solid ${C.lineStrong}`, borderRadius: "2px",
+          fontFamily: "'IBM Plex Sans', sans-serif",
+          background: C.card, color: C.ink, outline: "none",
+        }
+      }),
+      open && h("ul", {
+        style: {
+          position: "absolute", top: "calc(100% + 2px)", left: 0, right: 0,
+          background: C.card, border: `1px solid ${C.lineStrong}`, borderRadius: "2px",
+          margin: 0, padding: 0, listStyle: "none", zIndex: 100,
+          maxHeight: "240px", overflowY: "auto",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+        }
+      },
+        suggestions.map((s, i) => h("li", {
+          key: s.id,
+          onMouseDown: (e) => { e.preventDefault(); pick(s); },
+          onMouseEnter: () => setHighlighted(i),
+          style: {
+            padding: "10px 14px",
+            cursor: "pointer",
+            fontSize: "13px",
+            borderBottom: i < suggestions.length - 1 ? `1px solid ${C.line}` : "none",
+            background: i === highlighted ? C.tealSoft : "transparent",
+            color: C.ink,
+            fontFamily: "'IBM Plex Sans', sans-serif",
+          }
+        }, s.label))
+      )
+    );
+  }
+
+  // ============================================================
   // UI primitives
   // ============================================================
   function Slider({ label, unit, value, min, max, step, onChange, display, hint }) {
@@ -290,6 +422,7 @@
   // MAIN APP
   // ============================================================
   function App() {
+    const mapboxToken = useMapboxToken();
     const [address, setAddress] = useState("350 5th Ave, New York, NY");
     const [indoorF, setIndoorF] = useState(70);
     const [indoorRH, setIndoorRH] = useState(35);
@@ -300,11 +433,13 @@
     const [error, setError] = useState(null);
     const [result, setResult] = useState(null);  // full API response
 
-    async function runAnalysis() {
+    async function runAnalysis(addrOverride) {
+      const addr = (addrOverride !== undefined ? addrOverride : address).trim();
+      if (!addr) return;
       setLoading(true);
       setError(null);
       try {
-        const url = `/calculate?address=${encodeURIComponent(address)}&f=${fFactor}&t_in=${indoorF}&rh_in=${indoorRH}&include_hourly=true`;
+        const url = `/calculate?address=${encodeURIComponent(addr)}&f=${fFactor}&t_in=${indoorF}&rh_in=${indoorRH}&include_hourly=true`;
         const r = await fetch(url);
         if (!r.ok) {
           const text = await r.text();
@@ -364,21 +499,18 @@
         h("div", {
           style: { display: "flex", gap: "8px", alignItems: "stretch" }
         },
-          h("input", {
-            type: "text",
+          h(AddressAutocomplete, {
             value: address,
-            onChange: (e) => setAddress(e.target.value),
-            onKeyDown: (e) => { if (e.key === "Enter") runAnalysis(); },
-            placeholder: "Enter full address (e.g., 350 5th Ave, New York, NY)",
-            style: {
-              flex: 1, padding: "12px 16px", fontSize: "14px",
-              border: `1px solid ${C.lineStrong}`, borderRadius: "2px",
-              fontFamily: "'IBM Plex Sans', sans-serif",
-              background: C.card, color: C.ink,
-            }
+            onChange: setAddress,
+            onSelect: (s) => {
+              setAddress(s.label);
+              runAnalysis(s.label);  // auto-run on selection
+            },
+            onEnter: runAnalysis,
+            mapboxToken: mapboxToken,
           }),
           h("button", {
-            onClick: runAnalysis,
+            onClick: () => runAnalysis(),
             disabled: loading || !address.trim(),
             style: {
               padding: "0 22px", fontSize: "13px", fontWeight: 600,

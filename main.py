@@ -30,6 +30,7 @@ load_dotenv()
 # ------------------------------------------------------------
 NREL_API_KEY = os.getenv("NREL_API_KEY", "")
 NREL_EMAIL = os.getenv("NREL_EMAIL", "")
+MAPBOX_TOKEN = os.getenv("MAPBOX_TOKEN", "")
 
 CENSUS_GEOCODER_URL = (
     "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
@@ -161,8 +162,15 @@ def health():
     return {
         "status": "ok",
         "nrel_key_configured": bool(NREL_API_KEY),
+        "mapbox_token_configured": bool(MAPBOX_TOKEN),
         "cache_size": len(_WEATHER_CACHE),
     }
+
+
+@app.get("/config")
+def config():
+    """Expose frontend-safe config values (like the Mapbox public token)."""
+    return {"mapbox_token": MAPBOX_TOKEN}
 
 
 @app.get("/geocode")
