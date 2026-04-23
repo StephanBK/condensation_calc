@@ -18,6 +18,175 @@
     * { box-sizing: border-box; }
     input[type="range"] { width: 100%; }
     button { font-family: inherit; }
+
+    /* ================================================================
+       PRINT STYLES — used when user picks "Save as PDF" or prints
+       ================================================================ */
+    .print-only { display: none; }
+
+    @media print {
+      @page {
+        size: letter;
+        margin: 0.6in 0.6in 0.75in 0.6in;
+      }
+
+      html, body {
+        background: #fff !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      /* Hide anything explicitly marked no-print */
+      .no-print { display: none !important; }
+
+      /* Hide the web header (replaced by letterhead) */
+      header { display: none !important; }
+
+      /* Show print-only elements */
+      .print-only { display: block !important; }
+
+      /* Kill the outer container padding on print */
+      #root > div {
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+
+      /* ---- LETTERHEAD ---- */
+      .report-letterhead {
+        border-bottom: 2px solid #0B2A4A;
+        padding-bottom: 14px;
+        margin-bottom: 18px;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        page-break-after: avoid;
+      }
+      .report-brand-tag {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 10pt;
+        font-weight: 700;
+        letter-spacing: 0.2em;
+        color: #00A3B4;
+      }
+      .report-brand-sub {
+        font-size: 18pt;
+        font-weight: 600;
+        color: #0B2A4A;
+        letter-spacing: -0.01em;
+        margin-top: 2px;
+      }
+      .report-meta {
+        text-align: right;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 8.5pt;
+        color: #0F172A;
+      }
+      .report-meta-row { margin-bottom: 3px; }
+      .rm-label {
+        color: #64748B;
+        margin-right: 6px;
+        letter-spacing: 0.05em;
+      }
+      .rm-value {
+        color: #0F172A;
+        font-weight: 500;
+      }
+
+      /* ---- EXECUTIVE SUMMARY ---- */
+      .exec-summary {
+        border: 1px solid #CFCCC5;
+        padding: 14px 18px;
+        margin-bottom: 20px;
+        page-break-inside: avoid;
+        background: #FAFAF7 !important;
+      }
+      .exec-title {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 8.5pt;
+        font-weight: 600;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: #64748B;
+        margin-bottom: 10px;
+      }
+      .exec-row {
+        display: flex;
+        font-size: 9.5pt;
+        margin-bottom: 5px;
+        line-height: 1.45;
+      }
+      .exec-label {
+        flex: 0 0 120px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 8.5pt;
+        color: #64748B;
+        padding-top: 1px;
+      }
+      .exec-value {
+        flex: 1;
+        color: #0F172A;
+      }
+      .exec-verdict {
+        margin-top: 12px;
+        padding: 10px 14px;
+        border-left: 3px solid #D97706;
+        background: #fff !important;
+      }
+      .exec-verdict-level {
+        font-size: 11pt;
+        font-weight: 600;
+        margin-bottom: 3px;
+        font-variant-numeric: tabular-nums;
+      }
+      .exec-verdict-note {
+        font-size: 9pt;
+        color: #0F172A;
+        line-height: 1.4;
+      }
+
+      /* ---- STATS GRID ---- */
+      section[style*="grid-template-columns: 1.3fr"] {
+        border: 1px solid #CFCCC5 !important;
+        page-break-inside: avoid;
+        margin-bottom: 16px !important;
+      }
+
+      /* ---- HEATMAP & CHART ---- */
+      svg {
+        max-width: 100%;
+        height: auto;
+      }
+
+      div[style*="Hourly condensation map"],
+      div[style*="Surface temperature"] {
+        page-break-inside: avoid;
+      }
+
+      /* Re-show risk interpretation under charts on print (it is screen-only block) */
+      div[style*="borderLeft"][style*="solid"] {
+        page-break-inside: avoid;
+      }
+
+      /* ---- FOOTER ON EVERY PAGE (using page margin boxes) ---- */
+      @page {
+        @bottom-left {
+          content: "INOVUES · Cavity-Side Condensation Analysis";
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 8pt;
+          color: #94A3B8;
+        }
+        @bottom-right {
+          content: "Page " counter(page) " of " counter(pages);
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 8pt;
+          color: #94A3B8;
+        }
+      }
+
+      /* Web footer: hide on print (we have @page footer) */
+      footer { display: none !important; }
+    }
   </style>
 </head>
 <body>
@@ -428,6 +597,8 @@
     const [indoorRH, setIndoorRH] = useState(35);
     const [fFactor, setFFactor] = useState(0.30);
     const [filter, setFilter] = useState("all");
+    const [preparedBy, setPreparedBy] = useState("");
+    const [projectName, setProjectName] = useState("");
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -494,8 +665,8 @@
         derived && h(RiskBadge, { risk: derived.risk })
       ),
 
-      // ADDRESS BAR
-      h("section", { style: { marginBottom: "20px" } },
+      // ADDRESS BAR (hidden on print)
+      h("section", { className: "no-print", style: { marginBottom: "20px" } },
         h("div", {
           style: { display: "flex", gap: "8px", alignItems: "stretch" }
         },
@@ -521,18 +692,91 @@
               fontFamily: "'IBM Plex Mono', monospace",
               whiteSpace: "nowrap",
             }
-          }, loading ? "Fetching..." : "Run Analysis")
+          }, loading ? "Fetching..." : "Run Analysis"),
+          h("button", {
+            onClick: () => window.print(),
+            disabled: !result,
+            title: result ? "Download PDF or print" : "Run analysis first",
+            className: "no-print",
+            style: {
+              padding: "0 18px", fontSize: "13px", fontWeight: 600,
+              letterSpacing: "0.08em", textTransform: "uppercase",
+              background: result ? C.teal : C.line,
+              color: result ? C.card : C.faint,
+              border: "none", borderRadius: "2px",
+              cursor: result ? "pointer" : "not-allowed",
+              fontFamily: "'IBM Plex Mono', monospace",
+              whiteSpace: "nowrap",
+            }
+          }, "Export PDF")
         ),
         error && h("div", {
           style: {
             marginTop: "8px", padding: "10px 14px", background: C.redSoft, color: C.red,
             fontSize: "13px", fontFamily: "'IBM Plex Mono', monospace", borderRadius: "2px"
           }
-        }, "Error: ", error)
+        }, "Error: ", error),
+
+        // Project metadata row (for report header)
+        h("div", {
+          style: {
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "8px",
+          }
+        },
+          h("input", {
+            type: "text", value: projectName,
+            onChange: (e) => setProjectName(e.target.value),
+            placeholder: "Project name (optional — shown on PDF)",
+            style: {
+              padding: "8px 12px", fontSize: "12px",
+              border: `1px solid ${C.line}`, borderRadius: "2px",
+              fontFamily: "'IBM Plex Sans', sans-serif",
+              background: C.card, color: C.ink,
+            }
+          }),
+          h("input", {
+            type: "text", value: preparedBy,
+            onChange: (e) => setPreparedBy(e.target.value),
+            placeholder: "Prepared by (optional — shown on PDF)",
+            style: {
+              padding: "8px 12px", fontSize: "12px",
+              border: `1px solid ${C.line}`, borderRadius: "2px",
+              fontFamily: "'IBM Plex Sans', sans-serif",
+              background: C.card, color: C.ink,
+            }
+          })
+        )
       ),
 
-      // INPUT SLIDERS (3-col)
+      // ===== PRINT-ONLY REPORT HEADER (hidden on screen) =====
+      result && h("div", { className: "print-only report-letterhead" },
+        h("div", { className: "report-brand" },
+          h("div", { className: "report-brand-tag" }, "INOVUES"),
+          h("div", { className: "report-brand-sub" }, "Engineering Report"),
+        ),
+        h("div", { className: "report-meta" },
+          h("div", { className: "report-meta-row" },
+            h("span", { className: "rm-label" }, "Report:"),
+            h("span", { className: "rm-value" }, "Cavity-Side Condensation Analysis")
+          ),
+          projectName && h("div", { className: "report-meta-row" },
+            h("span", { className: "rm-label" }, "Project:"),
+            h("span", { className: "rm-value" }, projectName)
+          ),
+          h("div", { className: "report-meta-row" },
+            h("span", { className: "rm-label" }, "Date:"),
+            h("span", { className: "rm-value" }, new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }))
+          ),
+          preparedBy && h("div", { className: "report-meta-row" },
+            h("span", { className: "rm-label" }, "Prepared by:"),
+            h("span", { className: "rm-value" }, preparedBy)
+          ),
+        )
+      ),
+
+      // INPUT SLIDERS (3-col) — hidden on print
       h("section", {
+        className: "no-print",
         style: {
           display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1px",
           background: C.lineStrong, border: `1px solid ${C.lineStrong}`, marginBottom: "20px"
@@ -545,6 +789,7 @@
 
       // Re-run hint when sliders change after result loaded
       result && !loading && h("div", {
+        className: "no-print",
         style: {
           padding: "10px 14px", background: C.tealSoft, color: C.navy,
           fontSize: "12px", fontFamily: "'IBM Plex Mono', monospace",
@@ -554,8 +799,8 @@
 
       // Everything below only shows after first analysis
       derived && [
-        // OCCUPANCY FILTER
-        h("section", { key: "filter", style: { marginBottom: "20px" } },
+        // OCCUPANCY FILTER (hidden on print — filter setting is in exec summary)
+        h("section", { key: "filter", className: "no-print", style: { marginBottom: "20px" } },
           h("div", {
             style: {
               display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -574,6 +819,42 @@
             h(ToggleButton, { active: filter === "all",     onClick: () => setFilter("all"),     label: "All hours",     sub: "8,760 hr/yr" }),
             h(ToggleButton, { active: filter === "working", onClick: () => setFilter("working"), label: "Working hours", sub: "Mon–Fri 8–18 · 2,610 hr" }),
             h(ToggleButton, { active: filter === "off",     onClick: () => setFilter("off"),     label: "Off hours",     sub: "nights + weekends · 6,150 hr" }),
+          )
+        ),
+
+        // EXECUTIVE SUMMARY (print-only — shown before stats on PDF)
+        h("div", {
+          key: "execsum",
+          className: "print-only exec-summary"
+        },
+          h("div", { className: "exec-title" }, "Executive Summary"),
+          h("div", { className: "exec-body" },
+            h("div", { className: "exec-row" },
+              h("span", { className: "exec-label" }, "Location:"),
+              h("span", { className: "exec-value" }, result.location.matched_address)
+            ),
+            h("div", { className: "exec-row" },
+              h("span", { className: "exec-label" }, "Weather source:"),
+              h("span", { className: "exec-value" },
+                `NSRDB TMY · grid ${result.location.nsrdb_grid.lat}°, ${result.location.nsrdb_grid.lon}° · elev ${result.location.nsrdb_grid.elevation_m} m`
+              )
+            ),
+            h("div", { className: "exec-row" },
+              h("span", { className: "exec-label" }, "Inputs:"),
+              h("span", { className: "exec-value" },
+                `f-factor = ${fFactor.toFixed(3)} · indoor ${indoorF}°F / ${indoorRH}% RH · dew point ${derived.tDewF.toFixed(1)}°F`
+              )
+            ),
+            h("div", { className: "exec-row" },
+              h("span", { className: "exec-label" }, "Filter:"),
+              h("span", { className: "exec-value" }, filterLabel + ` (${derived.totalPool.toLocaleString()} hr)`)
+            ),
+            h("div", { className: "exec-verdict", style: { borderLeftColor: derived.risk.color } },
+              h("div", { className: "exec-verdict-level", style: { color: derived.risk.color } },
+                `${derived.risk.level} risk — ${derived.totalCond.toLocaleString()} condensation hours (${derived.pctPool.toFixed(1)}%)`
+              ),
+              h("div", { className: "exec-verdict-note" }, derived.risk.note)
+            )
           )
         ),
 
