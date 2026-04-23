@@ -58,8 +58,10 @@ uvicorn main:app --reload  # run the API
 
 ## NSRDB notes
 
-- TMY product: `psm3-2-2-tmy-download.csv` (continental US, 1998–present typical year)
-- Fields we use: `Temperature`, `Dew Point`, `Relative Humidity`
+- TMY product: `psm3-tmy-download.csv` (continental US, pre-computed typical year)
+- Fields we fetch: `air_temperature` (outdoor dry-bulb only)
+  - Indoor temperature and RH are **user inputs** in the calculator UI
+  - Indoor dew point is computed via Magnus–Tetens from those user inputs
 - Grid resolution: ~4 km
 - Rate limit (free tier): 1,000 req/hour, 10,000/day
 - We cache per-call in memory to avoid redundant pulls within a session

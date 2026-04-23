@@ -21,10 +21,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-NSRDB_TMY_URL = "https://developer.nrel.gov/api/nsrdb/v2/solar/psm3-tmy-download.csv"
+NSRDB_TMY_URL = "https://developer.nrel.gov/api/nsrdb/v2/solar/nsrdb-GOES-tmy-v4-0-0-download.csv"
 
-# Fields we actually need for the condensation calc
-ATTRIBUTES = "air_temperature,dew_point,relative_humidity"
+# Fields we actually need for the condensation calc.
+# The calculator only uses OUTDOOR DRY-BULB TEMPERATURE from weather data.
+# Indoor temperature and relative humidity are user inputs in the UI,
+# and the indoor dew point is computed from those via Magnus-Tetens.
+ATTRIBUTES = "air_temperature"
 
 
 def fetch_tmy(lat: float, lon: float, api_key: str, email: str) -> str:
@@ -44,7 +47,7 @@ def fetch_tmy(lat: float, lon: float, api_key: str, email: str) -> str:
         "interval": "60",
     }
     print(f"→ Requesting TMY for lat={lat}, lon={lon}...")
-    with httpx.Client(timeout=60) as client:
+    with httpx.Client(timeout=60, follow_redirects=True) as client:
         r = client.get(NSRDB_TMY_URL, params=params)
     if r.status_code != 200:
         print(f"✗ HTTP {r.status_code}")
@@ -121,37 +124,31 @@ def main():
     if len(hours) != 8760:
         print(f"⚠  Unexpected row count: {len(hours)}")
 
-    # Check the three fields we need
-    required = ["Temperature", "Dew Point", "Relative Humidity"]
+    # Check the one field we need
+    required = ["Temperature"]
     missing = [f for f in required if f not in hours[0]]
     if missing:
         print(f"✗ Missing required columns: {missing}")
         print(f"  Available: {list(hours[0].keys())}")
         sys.exit(1)
-    print(f"✓ All required fields present: {required}")
+    print(f"✓ Required field present: Temperature (outdoor dry-bulb)")
 
     # Summary stats
     temps = [float(h["Temperature"]) for h in hours]
-    dews = [float(h["Dew Point"]) for h in hours]
-    rhs = [float(h["Relative Humidity"]) for h in hours]
 
     print()
-    print(f"  Temperature   (°C): min={min(temps):6.1f}  "
-          f"mean={sum(temps)/len(temps):6.1f}  max={max(temps):6.1f}")
-    print(f"  Dew Point     (°C): min={min(dews):6.1f}  "
-          f"mean={sum(dews)/len(dews):6.1f}  max={max(dews):6.1f}")
-    print(f"  Relative Hum. (%):  min={min(rhs):6.1f}  "
-          f"mean={sum(rhs)/len(rhs):6.1f}  max={max(rhs):6.1f}")
+    print(f"  Outdoor Temperature (°C): "
+          f"min={min(temps):6.1f}  "
+          f"mean={sum(temps)/len(temps):6.1f}  "
+          f"max={max(temps):6.1f}")
 
-    # Show first 3 and last 3 rows as a spot check
+    # Show first 3 hours as a spot check
     print()
     print("FIRST 3 HOURS:")
     for h in hours[:3]:
         print(f"  {h['Year']}-{h['Month'].zfill(2)}-{h['Day'].zfill(2)} "
               f"{h['Hour'].zfill(2)}:00  "
-              f"T={h['Temperature']}°C  "
-              f"Td={h['Dew Point']}°C  "
-              f"RH={h['Relative Humidity']}%")
+              f"T_out = {h['Temperature']} °C")
 
     print()
     print("✓ All checks passed. NSRDB fetch is working.")
